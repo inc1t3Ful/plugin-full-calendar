@@ -511,3 +511,61 @@ describe('GoogleProvider deleted recurring instances', () => {
     expect(new URL(requestUrl || '').searchParams.get('showDeleted')).toBe('true');
   });
 });
+
+describe('GoogleProvider recurrence mapping', () => {
+  const baseEvent = {
+    title: 'Recurring Event',
+    type: 'recurring' as const,
+    allDay: true as const,
+    startRecur: '2026-08-24',
+    endDate: null,
+    skipDates: []
+  };
+
+  it('serializes monthly-by-day recurrence to an RRULE', () => {
+    const event = { ...baseEvent, dayOfMonth: 24 } as OFCEvent;
+
+    expect(toGoogleEvent(event)).toMatchObject({
+      recurrence: ['RRULE:FREQ=MONTHLY;BYMONTHDAY=24']
+    });
+  });
+
+  it('serializes monthly-by-day recurrence with a custom interval', () => {
+    const event = { ...baseEvent, dayOfMonth: 24, repeatInterval: 2 } as OFCEvent;
+
+    expect(toGoogleEvent(event)).toMatchObject({
+      recurrence: ['RRULE:FREQ=MONTHLY;BYMONTHDAY=24;INTERVAL=2']
+    });
+  });
+
+  it('serializes yearly recurrence to an RRULE', () => {
+    const event = { ...baseEvent, month: 12, dayOfMonth: 25 } as OFCEvent;
+
+    expect(toGoogleEvent(event)).toMatchObject({
+      recurrence: ['RRULE:FREQ=YEARLY;BYMONTH=12;BYMONTHDAY=25']
+    });
+  });
+
+  it('serializes positional monthly recurrence (e.g. last Friday) to an RRULE', () => {
+    const event = { ...baseEvent, repeatOn: { week: -1, weekday: 5 } } as OFCEvent;
+
+    expect(toGoogleEvent(event)).toMatchObject({
+      recurrence: ['RRULE:FREQ=MONTHLY;BYDAY=-1FR']
+    });
+  });
+
+  it('serializes daily recurrence to an RRULE', () => {
+    const event = { ...baseEvent, fcrDaily: true } as OFCEvent;
+
+    expect(toGoogleEvent(event)).toMatchObject({
+      recurrence: ['RRULE:FREQ=DAILY']
+    });
+  });
+
+  it('includes UNTIL when an end recurrence date is set', () => {
+    const event = { ...baseEvent, dayOfMonth: 24, endRecur: '2026-12-31' } as OFCEvent;
+
+    const result = toGoogleEvent(event) as { recurrence: string[] };
+    expect(result.recurrence[0]).toMatch(/^RRULE:FREQ=MONTHLY;BYMONTHDAY=24;UNTIL=\d{8}T\d{6}Z$/);
+  });
+});

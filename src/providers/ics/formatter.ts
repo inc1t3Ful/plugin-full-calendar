@@ -79,7 +79,7 @@ function addProviderAlarms(component: ical.Component, event: OFCEvent): void {
   }
 }
 
-function getRecurringEventRule(event: Extract<OFCEvent, { type: 'recurring' }>): string {
+export function getRecurringEventRule(event: Extract<OFCEvent, { type: 'recurring' }>): string {
   const parts: string[] = [];
 
   if (event.month !== undefined && event.dayOfMonth !== undefined) {
