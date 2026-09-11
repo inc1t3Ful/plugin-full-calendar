@@ -4,6 +4,32 @@ Fork-local changelog. Tracks fixes accumulated on `personal/main`, our fork's bu
 branch (never merged upstream). Each entry corresponds to a commit cherry-picked
 from its own `fix/google-*` branch.
 
+## 2026-09-11 - fix/google-edit-modal-uid-loss
+
+**Bug:** After editing a Google-native recurring event (e.g. toggling
+display mode back to normal) once successfully, every subsequent edit to
+that same event failed immediately with "Could not generate a persistent
+handle for the event being modified."
+
+Root cause: Google recurring master events are parsed as `type: 'rrule'`,
+but the recurring-event edit UI always saves as `type: 'recurring'`.
+`CacheMutationHandler.updateEventWithId`'s `uid`/`recurringEventId`/
+`recurrenceId` preservation guard only fired for `single`->`single`
+edits, so on this type transition the new event's missing `uid` was
+written into the cache as-is. The first edit still succeeded (the
+provider call uses the old, still-intact event to build its request),
+but every edit after that read the now uid-less event back out of the
+cache and failed to build a persistent handle.
+
+**Fix:** Preserve `uid`/`recurringEventId`/`recurrenceId` from the old
+event whenever missing on the new one, regardless of the type
+combination, since these are provider-identity fields on the common
+event schema, not state tied to a specific event type.
+
+**Result:** Google-native recurring events can now be edited repeatedly
+(display mode, recurrence, etc.) without losing their identity in the
+cache.
+
 ## 2026-09-11 - fix/google-rrule-double-prefix
 
 **Bug:** Any edit to a Google-sourced recurring master event (title, time,
