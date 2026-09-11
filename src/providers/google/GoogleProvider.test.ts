@@ -511,3 +511,119 @@ describe('GoogleProvider deleted recurring instances', () => {
     expect(new URL(requestUrl || '').searchParams.get('showDeleted')).toBe('true');
   });
 });
+
+describe('GoogleProvider single-instance mutations', () => {
+  function makeProvider() {
+    const plugin = {
+      app: {
+        vault: { getAbstractFileByPath: jest.fn() },
+        metadataCache: { getFileCache: jest.fn(), on: jest.fn(), offref: jest.fn() }
+      }
+    } as unknown as FullCalendarPlugin;
+    const provider = new GoogleProvider(
+      { id: 'google_1', name: 'Google Calendar', calendarId: 'primary' },
+      plugin
+    );
+    jest.spyOn(provider['authManager'], 'getTokenForSource').mockResolvedValue('token');
+    return provider;
+  }
+
+  const requestMock = jest.mocked(makeAuthenticatedRequest);
+
+  beforeEach(() => {
+    requestMock.mockReset();
+  });
+
+  it('cancels a timed instance by PATCHing the synthesized instance id, not POSTing a new event', async () => {
+    const provider = makeProvider();
+    requestMock.mockResolvedValue(true);
+
+    const masterEvent = {
+      type: 'rrule',
+      uid: 'master_1',
+      allDay: false,
+      startTime: '09:00',
+      timezone: 'UTC',
+      startDate: '2026-08-24',
+      rrule: 'FREQ=WEEKLY',
+      skipDates: []
+    } as unknown as OFCEvent;
+
+    await provider['cancelInstance'](masterEvent, '2026-08-31');
+
+    expect(requestMock).toHaveBeenCalledTimes(1);
+    const [, url, method, body] = requestMock.mock.calls[0];
+    expect(method).toBe('PATCH');
+    expect(url).toBe(
+      'https://www.googleapis.com/calendar/v3/calendars/primary/events/master_1_20260831T090000Z'
+    );
+    expect(body).toEqual({ status: 'cancelled' });
+  });
+
+  it('cancels an all-day instance using a date-only synthesized instance id', async () => {
+    const provider = makeProvider();
+    requestMock.mockResolvedValue(true);
+
+    const masterEvent = {
+      type: 'rrule',
+      uid: 'master_allday',
+      allDay: true,
+      date: '2026-08-24',
+      startDate: '2026-08-24',
+      rrule: 'FREQ=MONTHLY',
+      skipDates: []
+    } as unknown as OFCEvent;
+
+    await provider['cancelInstance'](masterEvent, '2026-09-24');
+
+    const [, url] = requestMock.mock.calls[0];
+    expect(url).toBe(
+      'https://www.googleapis.com/calendar/v3/calendars/primary/events/master_allday_20260924'
+    );
+  });
+
+  it('overrides a single instance by PATCHing the synthesized instance id', async () => {
+    const provider = makeProvider();
+    const gEventResponse: GoogleEventLike = {
+      id: 'master_1_20260831T090000Z',
+      summary: 'Moved occurrence',
+      start: { dateTime: '2026-08-31T10:00:00Z', timeZone: 'UTC' },
+      end: { dateTime: '2026-08-31T11:00:00Z', timeZone: 'UTC' }
+    };
+    requestMock.mockResolvedValue(gEventResponse);
+
+    const masterEvent = {
+      type: 'rrule',
+      uid: 'master_1',
+      allDay: false,
+      startTime: '09:00',
+      timezone: 'UTC',
+      startDate: '2026-08-24',
+      rrule: 'FREQ=WEEKLY',
+      skipDates: []
+    } as unknown as OFCEvent;
+
+    const overrideEvent = {
+      type: 'single',
+      title: 'Moved occurrence',
+      allDay: false,
+      date: '2026-08-31',
+      startTime: '10:00',
+      endTime: '11:00',
+      timezone: 'UTC'
+    } as unknown as OFCEvent;
+
+    const [result] = await provider.createInstanceOverride(
+      masterEvent,
+      '2026-08-31',
+      overrideEvent
+    );
+
+    const [, url, method] = requestMock.mock.calls[0];
+    expect(method).toBe('PATCH');
+    expect(url).toContain(
+      '/events/master_1_20260831T090000Z?conferenceDataVersion=1'
+    );
+    expect(result.title).toBe('Moved occurrence');
+  });
+});
