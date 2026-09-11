@@ -10,7 +10,7 @@
  * @license See LICENSE.md
  */
 
-import { RRule } from 'rrule';
+import { RRule, rrulestr, ByWeekday } from 'rrule';
 import { DateTime } from 'luxon';
 
 // Define a specific type for the data these functions operate on.
@@ -73,4 +73,127 @@ export function getFirstOccurrence(event: RecurringEventData): DateTime | null {
   // including the start date itself.
   const first = rule.after(rule.options.dtstart, true);
   return first ? DateTime.fromJSDate(first) : null;
+}
+
+export type ParsedRecurrenceUiFields = {
+  recurrenceType: 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly';
+  daysOfWeek: string[];
+  dayOfMonth?: number;
+  month?: number;
+  repeatOn?: { week: number; weekday: number };
+  repeatInterval: number;
+  endRecur?: string;
+};
+
+// rrule numbers weekdays MO=0..SU=6; the app's letter codes and `repeatOn.weekday`
+// both follow iCalendar's SU-first ordering instead. Index = rrule weekday number.
+const RRULE_WEEKDAY_TO_CODE = ['M', 'T', 'W', 'R', 'F', 'S', 'U'];
+const rruleWeekdayToRepeatOnWeekday = (rruleWeekday: number) => (rruleWeekday + 1) % 7;
+
+function firstOf<T>(value: T | T[] | null | undefined): T | undefined {
+  if (value === null || value === undefined) return undefined;
+  return Array.isArray(value) ? value[0] : value;
+}
+
+const WEEKDAY_STRS = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'];
+
+// `ByWeekday` covers rrule's construction-time inputs (string/number/Weekday), but
+// `rrulestr`-parsed `origOptions.byweekday` is always `Weekday` instances in
+// practice. Normalize defensively rather than assuming that.
+function normalizeWeekday(value: ByWeekday): { weekday: number; n?: number } {
+  if (typeof value === 'number') return { weekday: value };
+  if (typeof value === 'string') return { weekday: Math.max(0, WEEKDAY_STRS.indexOf(value)) };
+  return { weekday: value.weekday, n: value.n ?? undefined };
+}
+
+const EMPTY_PARSE_RESULT: ParsedRecurrenceUiFields = {
+  recurrenceType: 'none',
+  daysOfWeek: [],
+  repeatInterval: 1
+};
+
+/**
+ * Parses a bare `RRULE:...` string (as stored on a Google-native `type: 'rrule'`
+ * master event) into the same fields the recurring-event edit form uses. Without
+ * this, reopening the edit modal on a Google recurring event shows its recurrence
+ * as blank, since the form only knows how to read `type: 'recurring'` events.
+ *
+ * Only covers the recurrence shapes the `recurring` event type itself can already
+ * represent (daily/weekly/monthly[-on-the-Nth]/yearly, single interval, single
+ * UNTIL) - anything more exotic in the source RRULE has no UI equivalent to hydrate
+ * into regardless.
+ */
+export function parseRruleForUiFields(rruleString: string): ParsedRecurrenceUiFields {
+  let rule;
+  try {
+    rule = rrulestr(rruleString);
+  } catch {
+    return EMPTY_PARSE_RESULT;
+  }
+
+  const opts = rule.origOptions;
+  const repeatInterval = opts.interval ?? 1;
+  const endRecur = opts.until
+    ? (DateTime.fromJSDate(opts.until).toISODate() ?? undefined)
+    : undefined;
+
+  if (opts.freq === RRule.YEARLY) {
+    return {
+      recurrenceType: 'yearly',
+      daysOfWeek: [],
+      month: firstOf(opts.bymonth),
+      dayOfMonth: firstOf(opts.bymonthday),
+      repeatInterval,
+      endRecur
+    };
+  }
+
+  if (opts.freq === RRule.MONTHLY) {
+    const rawWeekday = firstOf(opts.byweekday);
+    if (rawWeekday !== undefined) {
+      const weekday = normalizeWeekday(rawWeekday);
+      const week = weekday.n ?? firstOf(opts.bysetpos) ?? 1;
+      return {
+        recurrenceType: 'monthly',
+        daysOfWeek: [],
+        repeatOn: { week, weekday: rruleWeekdayToRepeatOnWeekday(weekday.weekday) },
+        repeatInterval,
+        endRecur
+      };
+    }
+    return {
+      recurrenceType: 'monthly',
+      daysOfWeek: [],
+      dayOfMonth: firstOf(opts.bymonthday),
+      repeatInterval,
+      endRecur
+    };
+  }
+
+  if (opts.freq === RRule.WEEKLY) {
+    const entries: ByWeekday[] = opts.byweekday
+      ? Array.isArray(opts.byweekday)
+        ? opts.byweekday
+        : [opts.byweekday]
+      : [];
+    return {
+      recurrenceType: 'weekly',
+      daysOfWeek: entries
+        .map(w => RRULE_WEEKDAY_TO_CODE[normalizeWeekday(w).weekday])
+        .filter(Boolean),
+      repeatInterval,
+      endRecur
+    };
+  }
+
+  if (opts.freq === RRule.DAILY) {
+    return {
+      recurrenceType: 'daily',
+      daysOfWeek: [],
+      repeatInterval,
+      endRecur
+    };
+  }
+
+  return EMPTY_PARSE_RESULT;
 }
