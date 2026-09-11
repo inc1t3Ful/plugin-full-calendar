@@ -20,6 +20,7 @@ import { parseSubcategoryTitle } from '../../features/category/categoryParser';
 import { t } from '../../features/i18n/i18n';
 import { setIcon } from 'obsidian';
 import { PluginState } from '../../core/PluginState';
+import { parseRruleForUiFields } from '../../types/rrule';
 
 const Icon = ({ name }: { name: string }) => {
   const ref = React.useRef<HTMLDivElement>(null);
@@ -117,7 +118,10 @@ export function getEventCalendarOptions(
   }));
 }
 
-function getInitialRecurrenceType(event?: Partial<OFCEvent>): RecurrenceType {
+export function getInitialRecurrenceType(event?: Partial<OFCEvent>): RecurrenceType {
+  if (event?.type === 'rrule' && event.rrule) {
+    return parseRruleForUiFields(event.rrule).recurrenceType;
+  }
   if (event?.type !== 'recurring') {
     return 'none';
   }
@@ -151,6 +155,14 @@ export const EditEvent = ({
   mode
 }: EditEventProps) => {
   const isChildOverride = !!initialEvent?.recurringEventId;
+
+  // Google-native recurring masters parse as `type: 'rrule'`, but this form's
+  // recurrence fields only ever populated from `type: 'recurring'`. Parse the
+  // raw RRULE string once so every field below can hydrate from either type.
+  const rruleFields =
+    initialEvent?.type === 'rrule' && initialEvent.rrule
+      ? parseRruleForUiFields(initialEvent.rrule)
+      : undefined;
 
   const disabledTooltip = t('modals.editEvent.tooltips.inheritedProperty'); // Update tooltip
 
@@ -198,13 +210,15 @@ export const EditEvent = ({
     initialEvent?.type === 'single' && initialEvent.completed
   );
   const [daysOfWeek, setDaysOfWeek] = useState<string[]>(
-    initialEvent?.type === 'recurring' ? initialEvent.daysOfWeek || [] : []
+    initialEvent?.type === 'recurring'
+      ? initialEvent.daysOfWeek || []
+      : rruleFields?.daysOfWeek || []
   );
   const [endRecur, setEndRecur] = useState(
-    initialEvent?.type === 'recurring' ? initialEvent.endRecur : undefined
+    initialEvent?.type === 'recurring' ? initialEvent.endRecur : rruleFields?.endRecur
   );
   const [repeatInterval, setRepeatInterval] = useState(
-    initialEvent?.type === 'recurring' ? initialEvent.repeatInterval || 1 : 1
+    initialEvent?.type === 'recurring' ? initialEvent.repeatInterval || 1 : rruleFields?.repeatInterval || 1
   );
   // START ADDITION
   const [notifyValue, setNotifyValue] = useState(
@@ -219,15 +233,22 @@ export const EditEvent = ({
   );
   // END ADDITION
   type MonthlyMode = 'dayOfMonth' | 'onThe';
-  const getInitialMonthlyMode = (): MonthlyMode =>
-    initialEvent?.type === 'recurring' && initialEvent.repeatOn ? 'onThe' : 'dayOfMonth';
+  const getInitialMonthlyMode = (): MonthlyMode => {
+    const repeatOn =
+      initialEvent?.type === 'recurring' ? initialEvent.repeatOn : rruleFields?.repeatOn;
+    return repeatOn ? 'onThe' : 'dayOfMonth';
+  };
 
   const [monthlyMode, setMonthlyMode] = useState<MonthlyMode>(getInitialMonthlyMode());
   const [repeatOnWeek, setRepeatOnWeek] = useState(
-    initialEvent?.type === 'recurring' ? initialEvent.repeatOn?.week || 1 : 1
+    initialEvent?.type === 'recurring'
+      ? initialEvent.repeatOn?.week || 1
+      : rruleFields?.repeatOn?.week || 1
   );
   const [repeatOnWeekday, setRepeatOnWeekday] = useState(
-    initialEvent?.type === 'recurring' ? initialEvent.repeatOn?.weekday || 0 : 0
+    initialEvent?.type === 'recurring'
+      ? initialEvent.repeatOn?.weekday || 0
+      : rruleFields?.repeatOn?.weekday || 0
   );
   // END ADDITION
   const initialDisplay =
