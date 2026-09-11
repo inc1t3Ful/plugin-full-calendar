@@ -16,6 +16,7 @@ import { constructTitle } from '../../../features/category/categoryParser';
 import { rrulestr } from 'rrule';
 import { injectMeetingUrl } from '../../../utils/meetingUrl';
 import { GOOGLE_DISPLAY_PROPERTY, isDisplayValue } from '../../utils/displayProperty';
+import { getRecurringEventRule } from '../../ics/formatter';
 
 /**
  * Transforms a single event object from the Google Calendar API into the OFCEvent format.
@@ -245,21 +246,7 @@ export function toGoogleEvent(event: OFCEvent): object {
   if (event.type === 'rrule' && event.rrule) {
     recurrence.push(`RRULE:${event.rrule}`);
   } else if (event.type === 'recurring') {
-    // Translate our simple recurrence format to an RRULE string
-    const weekdays = { U: 'SU', M: 'MO', T: 'TU', W: 'WE', R: 'TH', F: 'FR', S: 'SA' };
-    if (event.daysOfWeek && event.daysOfWeek.length > 0) {
-      const byday = event.daysOfWeek.map((c: keyof typeof weekdays) => weekdays[c]);
-      let rrule = `RRULE:FREQ=WEEKLY;BYDAY=${byday.join(',')}`;
-      if (event.endRecur) {
-        // Google's UNTIL is inclusive, so we set it to the end of the day.
-        const until = DateTime.fromISO(event.endRecur)
-          .endOf('day')
-          .toUTC()
-          .toFormat("yyyyMMdd'T'HHmmss'Z'");
-        rrule += `;UNTIL=${until}`;
-      }
-      recurrence.push(rrule);
-    }
+    recurrence.push(`RRULE:${getRecurringEventRule(event)}`);
   }
 
   if (recurrence.length > 0) {
@@ -337,20 +324,30 @@ export function toGoogleEvent(event: OFCEvent): object {
     }
   } else {
     // All-Day Event
+    let startDate: string | undefined;
+    let inclusiveEndDate: string | undefined;
+
     if (event.type === 'single') {
-      gEvent.start = {
-        date: event.date
-      };
-      const inclusiveEndDate = event.endDate || event.date;
-      const exclusiveEndDate = DateTime.fromISO(inclusiveEndDate).plus({ days: 1 }).toISODate();
-      gEvent.end = {
-        date: exclusiveEndDate
-      };
-    } else {
-      // For now, only single all-day events are supported for writing.
-      // Recurring all-day events would need more complex RRULE generation.
-      throw new Error('Creating/modifying recurring all-day Google events is not yet supported.');
+      startDate = event.date;
+      inclusiveEndDate = event.endDate || event.date;
+    } else if (event.type === 'rrule') {
+      startDate = event.startDate;
+      inclusiveEndDate = event.startDate;
+    } else if (event.type === 'recurring') {
+      startDate = event.startRecur;
+      inclusiveEndDate = event.startRecur;
     }
+
+    if (!startDate || !inclusiveEndDate) {
+      throw new Error('Cannot create an all-day Google event without a start date.');
+    }
+
+    gEvent.start = {
+      date: startDate
+    };
+    gEvent.end = {
+      date: DateTime.fromISO(inclusiveEndDate).plus({ days: 1 }).toISODate()
+    };
   }
 
   return gEvent;
