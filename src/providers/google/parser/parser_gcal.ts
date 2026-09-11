@@ -244,7 +244,11 @@ export function toGoogleEvent(event: OFCEvent): object {
   // 2. Recurrence
   const recurrence: string[] = [];
   if (event.type === 'rrule' && event.rrule) {
-    recurrence.push(`RRULE:${event.rrule}`);
+    // `event.rrule` may already carry an `RRULE:` prefix (e.g. round-tripped from
+    // `fromGoogleEvent`, which stores `rrule.toString()` verbatim). Strip it before
+    // re-adding, otherwise Google rejects the malformed double-prefixed line.
+    const bareRrule = event.rrule.replace(/^RRULE:/i, '');
+    recurrence.push(`RRULE:${bareRrule}`);
   } else if (event.type === 'recurring') {
     recurrence.push(`RRULE:${getRecurringEventRule(event)}`);
   }
