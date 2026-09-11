@@ -4,6 +4,29 @@ Fork-local changelog. Tracks fixes accumulated on `personal/main`, our fork's bu
 branch (never merged upstream). Each entry corresponds to a commit cherry-picked
 from its own `fix/google-*` branch.
 
+## 2026-09-11 - fix/google-rrule-double-prefix
+
+**Bug:** Any edit to a Google-sourced recurring master event (title, time,
+display mode, etc.) appeared to apply for a moment, then silently reverted
+with no visible error. Non-recurring events were unaffected.
+
+Root cause: `fromGoogleEvent` stores `rrule.toString()` verbatim, which
+already includes an `RRULE:` prefix (the convention `interop.ts` relies on
+for local FullCalendar rendering). `toGoogleEvent`'s `rrule`-type branch
+unconditionally prepended another `RRULE:` prefix, producing a malformed
+`RRULE:RRULE:...` recurrence line on every PUT/PATCH back to Google. Google
+rejects the malformed request, and `CacheMutationHandler` rolls the local
+cache back to its prior state on failure — hence the "reverts silently"
+symptom. Pre-existing since the original two-way sync implementation,
+unrelated to the other Google fixes on this fork.
+
+**Fix:** Strip any existing `RRULE:` prefix from `event.rrule` before
+re-adding it in `toGoogleEvent`.
+
+**Result:** Edits to Google-sourced recurring master events (including
+toggling display mode) now persist correctly instead of silently rolling
+back.
+
 ## 2026-09-11 - fix/google-instance-override-id
 
 **Bug:** Deleting or moving a single instance of a recurring Google event did
