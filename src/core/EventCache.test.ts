@@ -799,6 +799,68 @@ describe('editable calendars', () => {
       );
     });
 
+    it('preserves uid when an rrule master is edited into a recurring-type save', async () => {
+      // Regression test: editing a Google-native `type: 'rrule'` event via the
+      // recurring-event UI always submits `type: 'recurring'`. The old
+      // single/single-only guard did not restore `uid` across that type
+      // transition, so the cache persisted a uid-less event and every
+      // subsequent edit failed with "Could not generate a persistent handle
+      // for the event being modified."
+      const rruleEvent: EditableEventResponse = [
+        {
+          title: 'Monthly Sync',
+          uid: 'google-event-id',
+          type: 'rrule',
+          startDate: '2026-05-24',
+          endDate: null,
+          rrule: 'RRULE:FREQ=MONTHLY;BYMONTHDAY=24',
+          skipDates: [],
+          allDay: true
+        } as unknown as OFCEvent,
+        mockLocation()
+      ];
+
+      const [cache, calendar] = makeEditableCache([rruleEvent]);
+      await cache.populate();
+
+      const id = cache.getAllEvents()[0].events[0].id;
+      calendar.updateEvent.mockResolvedValue(mockLocation());
+
+      await cache.updateEventWithId(id, {
+        title: 'Monthly Sync',
+        type: 'recurring',
+        allDay: true,
+        dayOfMonth: 24,
+        startRecur: '2026-05-24',
+        endRecur: undefined,
+        skipDates: []
+      } as unknown as OFCEvent);
+
+      expect(cache.store.getEventById(id)).toEqual(
+        expect.objectContaining({ uid: 'google-event-id' })
+      );
+
+      // The persistent handle must still resolve on the NEXT edit too.
+      calendar.updateEvent.mockResolvedValue(mockLocation());
+      await cache.updateEventWithId(id, {
+        title: 'Monthly Sync',
+        type: 'recurring',
+        allDay: true,
+        dayOfMonth: 24,
+        startRecur: '2026-05-24',
+        endRecur: undefined,
+        skipDates: [],
+        display: 'background'
+      } as unknown as OFCEvent);
+
+      const lastCall = calendar.updateEvent.mock.calls[calendar.updateEvent.mock.calls.length - 1];
+      expect(lastCall).toEqual([
+        expect.objectContaining({ persistentId: 'google-event-id' }),
+        expect.any(Object),
+        expect.objectContaining({ uid: 'google-event-id', display: 'background' })
+      ]);
+    });
+
     it.each([
       [
         'calendar moves event to a new file',

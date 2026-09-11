@@ -270,18 +270,23 @@ export class CacheMutationHandler {
 
     const { provider, event: oldEvent } = this.ctx.getProviderForEvent(eventId);
     newEvent = this.ensureDefaultTimedDurationOnAllDayTransition(oldEvent, newEvent);
-    if (oldEvent.type === 'single' && newEvent.type === 'single') {
-      newEvent = {
-        ...newEvent,
-        ...(oldEvent.uid && !newEvent.uid ? { uid: oldEvent.uid } : {}),
-        ...(oldEvent.recurringEventId && !newEvent.recurringEventId
-          ? { recurringEventId: oldEvent.recurringEventId }
-          : {}),
-        ...(oldEvent.recurrenceId && !newEvent.recurrenceId
-          ? { recurrenceId: oldEvent.recurrenceId }
-          : {})
-      };
-    }
+    // `uid`/`recurringEventId`/`recurrenceId` are provider-identity fields on the
+    // common event schema, not state tied to a specific event `type`. A save can
+    // legitimately change `type` (e.g. editing a Google-native `rrule` master
+    // through the recurring-event UI, which always emits `type: 'recurring'`);
+    // if these fields aren't restored across that transition, the cache persists
+    // an event missing its `uid`, and every subsequent edit fails with
+    // "Could not generate a persistent handle for the event being modified."
+    newEvent = {
+      ...newEvent,
+      ...(oldEvent.uid && !newEvent.uid ? { uid: oldEvent.uid } : {}),
+      ...(oldEvent.recurringEventId && !newEvent.recurringEventId
+        ? { recurringEventId: oldEvent.recurringEventId }
+        : {}),
+      ...(oldEvent.recurrenceId && !newEvent.recurrenceId
+        ? { recurrenceId: oldEvent.recurrenceId }
+        : {})
+    };
     const calendarId = originalDetails.calendarId;
 
     if (!provider.getCapabilities().canEdit) {
