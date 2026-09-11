@@ -2,9 +2,42 @@
 
 Fork-local changelog. Tracks fixes accumulated on `personal/main`, our fork's build
 branch (never merged upstream). Each entry corresponds to a commit cherry-picked
-from its own `fix/google-*` branch.
+from its own `fix/google-*` branch. Fixes are numbered `#N` in the order they
+were found — not the same as reading order below, since entries are grouped by
+date (newest first).
 
-## 2026-09-11 - fix/google-edit-modal-uid-loss
+## Why these are all one cluster
+
+All six fixes trace back to two goals: (1) toggle an event's display mode
+(background/normal) back and forth, and (2) save recurring events through the
+UI's full set of options (monthly, yearly, positional, daily). Both goals run
+through the same underdeveloped subsystem — Google recurrence sync, display-mode
+sync, and cache identity handling — and `type: 'rrule'` (how Google recurring
+masters get parsed) turned out to be a second-class citizen across nearly every
+layer that touches it. Fixing one bug in this area routinely exposed the next
+one layer deeper:
+
+1. **display-reminder-sync** — display mode had no Google field at all. Blocked
+   goal 1 outright.
+2. **ics-display-sync** — same display-mode gap, ICS path instead of Google.
+3. **monthly-recurrence-sync** — `recurring`-type events never built RRULE for
+   monthly/yearly/positional/daily. Blocked goal 2.
+4. **instance-override-id** — single-instance edit/delete used the wrong Google
+   API call (read-only field misuse).
+5. **rrule-double-prefix** — `rrule`-type (Google-native master) edits got a
+   malformed RRULE, silently reverting. Blocked toggling display back on a
+   monthly recurring master specifically.
+6. **edit-modal-uid-loss** — fixing #5 let the first edit through, which
+   exposed the next bug: the cache lost `uid` on the `rrule`→`recurring` type
+   swap that happens mid-edit, breaking every edit after the first.
+
+Still open, same cluster: `EditEvent.tsx`'s recurrence form doesn't hydrate
+from a `type: 'rrule'` event, so reopening the edit modal on a Google-native
+recurring event shows its recurrence settings as blank.
+
+# 2026-09-11
+
+## #6 fix/google-edit-modal-uid-loss
 
 **Bug:** After editing a Google-native recurring event (e.g. toggling
 display mode back to normal) once successfully, every subsequent edit to
@@ -30,7 +63,7 @@ event schema, not state tied to a specific event type.
 (display mode, recurrence, etc.) without losing their identity in the
 cache.
 
-## 2026-09-11 - fix/google-rrule-double-prefix
+## #5 fix/google-rrule-double-prefix
 
 **Bug:** Any edit to a Google-sourced recurring master event (title, time,
 display mode, etc.) appeared to apply for a moment, then silently reverted
@@ -53,7 +86,7 @@ re-adding it in `toGoogleEvent`.
 toggling display mode) now persist correctly instead of silently rolling
 back.
 
-## 2026-09-11 - fix/google-instance-override-id
+## #4 fix/google-instance-override-id
 
 **Bug:** Deleting or moving a single instance of a recurring Google event did
 nothing on Google's side. Obsidian's local view updated (event disappeared),
@@ -75,7 +108,7 @@ the old hardcoded block on overriding a single instance of an all-day
 recurring event, since the corrected approach handles timed and all-day
 instances the same way.
 
-## 2026-09-11 - fix/google-monthly-recurrence-sync
+## #3 fix/google-monthly-recurrence-sync
 
 **Bug:** Creating/editing a Google event with monthly, yearly, positional
 (e.g. "third Tuesday"), or daily recurrence silently produced wrong or no
@@ -93,7 +126,9 @@ present in the UI.
 **Result:** Monthly, yearly, positional, and daily recurring Google events
 now sync with the correct RRULE instead of silently failing.
 
-## 2026-09-10 - fix/ics-display-sync
+# 2026-09-10
+
+## #2 fix/ics-display-sync
 
 **Bug:** The "display" mode set on an event (e.g. background/transparent)
 did not persist through ICS import/export round-trips.
@@ -103,7 +138,7 @@ did not persist through ICS import/export round-trips.
 
 **Result:** Display mode now survives ICS export and re-import.
 
-## 2026-09-10 - fix/google-display-reminder-sync
+## #1 fix/google-display-reminder-sync
 
 **Bug:** An event's display mode and reminders/alarms did not persist
 correctly when synced to/from Google Calendar. Clearing all reminders,
