@@ -17,6 +17,25 @@ import { LinkedNoteIndex } from '../utils/LinkedNoteIndex';
 import { TFile } from 'obsidian';
 import { createLinkedNoteForProvider } from '../../features/linked-notes/linkedNotes';
 
+// Google identifies a single instance of a recurring event with a synthesized ID of the form
+// `{masterEventId}_{originalStartTime}`, where the time component is the basic (no separators)
+// UTC form for timed events, or the basic date for all-day events. This ID can be PATCHed/DELETEd
+// directly without first calling `events.instances()`.
+function toGoogleInstanceId(
+  masterUid: string,
+  instanceDate: string,
+  allDay: boolean,
+  timezone?: string,
+  startTime?: string
+): string {
+  if (allDay) {
+    return `${masterUid}_${instanceDate.replace(/-/g, '')}`;
+  }
+  const zone = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const utc = DateTime.fromISO(`${instanceDate}T${startTime || '00:00'}`, { zone }).toUTC();
+  return `${masterUid}_${utc.toFormat("yyyyMMdd'T'HHmmss'Z'")}`;
+}
+
 // Settings row component for Google Provider
 const GoogleNameSetting: React.FC<{ source: Partial<import('../../types').CalendarInfo> }> = ({
   source
@@ -338,34 +357,19 @@ export class GoogleProvider implements CalendarProvider<GoogleProviderConfig>, S
     if (!parentEvent.uid) {
       throw new Error('Cannot cancel an instance of a recurring event that has no master UID.');
     }
-    const body: Record<string, unknown> = {
-      recurringEventId: parentEvent.uid,
-      status: 'cancelled'
-    };
-    // Google API expects either a date (all-day) or dateTime/timeZone pair.
-    // `toISO()` can theoretically return null, so allow null and guard.
-    let startTimeObject: { date?: string; dateTime?: string; timeZone?: string };
-    if (parentEvent.allDay) {
-      startTimeObject = { date: instanceDate };
-    } else {
-      const timeZone = parentEvent.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const startTime =
-        !parentEvent.allDay && 'startTime' in parentEvent ? parentEvent.startTime : '00:00';
-      const isoDateTime = DateTime.fromISO(`${instanceDate}T${startTime}`, {
-        zone: timeZone
-      }).toISO();
-      startTimeObject = isoDateTime
-        ? { dateTime: isoDateTime, timeZone: timeZone }
-        : { date: instanceDate };
-    }
-    body.originalStartTime = startTimeObject;
-    body.start = startTimeObject;
-    body.end = startTimeObject;
+
+    const instanceId = toGoogleInstanceId(
+      parentEvent.uid,
+      instanceDate,
+      !!parentEvent.allDay,
+      parentEvent.timezone,
+      parentEvent.allDay === false ? parentEvent.startTime : undefined
+    );
 
     const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(
       this.source.calendarId
-    )}/events`;
-    await makeAuthenticatedRequest(token, url, 'POST', body);
+    )}/events/${encodeURIComponent(instanceId)}`;
+    await makeAuthenticatedRequest(token, url, 'PATCH', { status: 'cancelled' });
   }
 
   async createInstanceOverride(
@@ -383,34 +387,32 @@ export class GoogleProvider implements CalendarProvider<GoogleProviderConfig>, S
     });
     if (!token) throw new GoogleApiError('Cannot create instance override: not authenticated.');
 
-    if (newEventData.allDay === false && masterEvent.allDay === false) {
-      const originalStartTime = {
-        dateTime: DateTime.fromISO(`${instanceDate}T${masterEvent.startTime}`).toISO(),
-        timeZone: masterEvent.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone
-      };
-
-      const body = {
-        ...toGoogleEvent(newEventData),
-        recurringEventId: masterEvent.uid,
-        originalStartTime: originalStartTime
-      };
-
-      const newGEvent = await makeAuthenticatedRequest<GoogleEventLike>(
-        token,
-        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.source.calendarId)}/events?conferenceDataVersion=1`,
-        'POST',
-        body
-      );
-
-      const rawEvent = fromGoogleEvent(newGEvent);
-      if (!rawEvent) {
-        throw new Error('Could not parse Google API response after creating instance override.');
-      }
-      return [rawEvent, null];
+    if (!masterEvent.uid) {
+      throw new Error('Cannot override an instance of a recurring event that has no master UID.');
     }
-    throw new Error(
-      'Modifying a single instance of an all-day recurring event is not yet supported for Google Calendars.'
+
+    const instanceId = toGoogleInstanceId(
+      masterEvent.uid,
+      instanceDate,
+      !!masterEvent.allDay,
+      masterEvent.timezone,
+      masterEvent.allDay === false ? masterEvent.startTime : undefined
     );
+
+    const body = toGoogleEvent(newEventData);
+
+    const updatedGEvent = await makeAuthenticatedRequest<GoogleEventLike>(
+      token,
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.source.calendarId)}/events/${encodeURIComponent(instanceId)}?conferenceDataVersion=1`,
+      'PATCH',
+      body
+    );
+
+    const rawEvent = fromGoogleEvent(updatedGEvent);
+    if (!rawEvent) {
+      throw new Error('Could not parse Google API response after creating instance override.');
+    }
+    return [rawEvent, null];
   }
 
   getConfigurationComponent(): FCReactComponent<GoogleConfigProps> {
