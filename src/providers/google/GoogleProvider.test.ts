@@ -511,3 +511,43 @@ describe('GoogleProvider deleted recurring instances', () => {
     expect(new URL(requestUrl || '').searchParams.get('showDeleted')).toBe('true');
   });
 });
+
+describe('GoogleProvider rrule round-trip', () => {
+  it('does not double-prefix an rrule-type event whose rrule string already carries RRULE:', () => {
+    // `fromGoogleEvent` stores `rrule.toString()` verbatim, which already includes the
+    // `RRULE:` prefix. Round-tripping such an event back through `toGoogleEvent` (e.g. any
+    // edit to a Google-sourced recurring master, like toggling display mode) must not
+    // re-add the prefix, or Google rejects the malformed `recurrence` field.
+    const event = {
+      type: 'rrule',
+      title: 'Weekly Event',
+      allDay: false,
+      startDate: '2026-08-24',
+      startTime: '09:00',
+      endTime: '10:00',
+      endDate: null,
+      rrule: 'RRULE:FREQ=WEEKLY;BYDAY=MO',
+      skipDates: []
+    } as unknown as OFCEvent;
+
+    expect(toGoogleEvent(event)).toMatchObject({
+      recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=MO']
+    });
+  });
+
+  it('parses a Google recurring event and serializes it back without prefix drift', () => {
+    const gEvent = {
+      id: 'master_1',
+      summary: 'Weekly Event',
+      start: { dateTime: '2026-08-24T09:00:00Z', timeZone: 'UTC' },
+      end: { dateTime: '2026-08-24T10:00:00Z', timeZone: 'UTC' },
+      recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=MO']
+    };
+
+    const parsed = fromGoogleEvent(gEvent);
+    expect(parsed).not.toBeNull();
+
+    const body = toGoogleEvent(parsed as OFCEvent) as { recurrence: string[] };
+    expect(body.recurrence).toEqual(['RRULE:FREQ=WEEKLY;BYDAY=MO']);
+  });
+});
