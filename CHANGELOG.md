@@ -8,7 +8,7 @@ date (newest first).
 
 ## Why these are all one cluster
 
-All six fixes trace back to two goals: (1) toggle an event's display mode
+All seven fixes trace back to two goals: (1) toggle an event's display mode
 (background/normal) back and forth, and (2) save recurring events through the
 UI's full set of options (monthly, yearly, positional, daily). Both goals run
 through the same underdeveloped subsystem — Google recurrence sync, display-mode
@@ -30,12 +30,35 @@ one layer deeper:
 6. **edit-modal-uid-loss** — fixing #5 let the first edit through, which
    exposed the next bug: the cache lost `uid` on the `rrule`→`recurring` type
    swap that happens mid-edit, breaking every edit after the first.
-
-Still open, same cluster: `EditEvent.tsx`'s recurrence form doesn't hydrate
-from a `type: 'rrule'` event, so reopening the edit modal on a Google-native
-recurring event shows its recurrence settings as blank.
+7. **edit-modal-recurrence-hydration** — the edit modal's recurrence form only
+   ever hydrated from `type: 'recurring'`, so reopening a Google-native
+   recurring event showed its repeat settings as blank instead of reading them
+   back out of its `rrule` string. Last bug in the cluster: no further layer
+   left unhandled.
 
 # 2026-09-11
+
+## #7 fix/google-edit-modal-recurrence-hydration
+
+**Bug:** Reopening the edit modal on a Google-native recurring event showed
+"Repeats: None" and blank day/end-date fields, even though the event
+genuinely recurred. Saving from that state risked silently downgrading the
+event to a one-off.
+
+Root cause: Google recurring masters parse as `type: 'rrule'`, but every
+recurrence-field initializer in `EditEvent.tsx` (recurrence type, days of
+week, monthly mode, end date, interval, "on the Nth weekday") only read from
+`type: 'recurring'`. `type: 'rrule'` events carry their recurrence as a raw
+`rrule` string instead, which none of these initializers ever looked at.
+
+**Fix:** Added `parseRruleForUiFields()` (`src/types/rrule.ts`), the inverse
+of the existing `getRecurringEventRule()`, which parses the `rrule` string via
+the `rrule` library into the same recurrenceType/daysOfWeek/repeatOn/
+repeatInterval/endRecur shape the form already used, and wired it into each
+initializer as a fallback for `type: 'rrule'` events.
+
+**Result:** Opening a Google-native recurring event for editing now shows its
+actual recurrence settings instead of blank defaults.
 
 ## #6 fix/google-edit-modal-uid-loss
 
