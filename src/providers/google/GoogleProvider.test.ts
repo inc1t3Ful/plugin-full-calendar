@@ -905,3 +905,95 @@ describe('GoogleProvider rrule round-trip', () => {
     expect(body.recurrence).toEqual(['RRULE:FREQ=WEEKLY;BYDAY=MO']);
   });
 });
+
+describe('GoogleProvider updateEvent', () => {
+  function makeProvider() {
+    const plugin = {
+      app: {
+        vault: { getAbstractFileByPath: jest.fn() },
+        metadataCache: { getFileCache: jest.fn(), on: jest.fn(), offref: jest.fn() }
+      }
+    } as unknown as FullCalendarPlugin;
+    const provider = new GoogleProvider(
+      { id: 'google_1', name: 'Google Calendar', calendarId: 'primary' },
+      plugin
+    );
+    jest.spyOn(provider['authManager'], 'getTokenForSource').mockResolvedValue('token');
+    return provider;
+  }
+
+  const baseEvent = {
+    title: 'Event',
+    type: 'single',
+    date: '2026-06-15',
+    endDate: null,
+    allDay: false,
+    startTime: '10:00',
+    endTime: '11:00'
+  } as OFCEvent;
+
+  const requestMock = jest.mocked(makeAuthenticatedRequest);
+
+  beforeEach(() => {
+    requestMock.mockReset();
+  });
+
+  it('PATCHes instead of PUTting, so fields we do not model are left alone', async () => {
+    const provider = makeProvider();
+    requestMock.mockResolvedValue(true);
+
+    await provider.updateEvent({ persistentId: 'event-1' }, baseEvent, {
+      ...baseEvent,
+      title: 'Renamed'
+    });
+
+    expect(requestMock).toHaveBeenCalledTimes(1);
+    const [, , method] = requestMock.mock.calls[0];
+    expect(method).toBe('PATCH');
+  });
+
+  it('omits extendedProperties from the PATCH body when the display mode is unchanged', async () => {
+    const provider = makeProvider();
+    requestMock.mockResolvedValue(true);
+
+    await provider.updateEvent(
+      { persistentId: 'event-1' },
+      { ...baseEvent, display: 'background' },
+      { ...baseEvent, display: 'background', title: 'Renamed' }
+    );
+
+    // No GET should be needed either, since we have nothing to merge.
+    expect(requestMock).toHaveBeenCalledTimes(1);
+    const [, , method, body] = requestMock.mock.calls[0];
+    expect(method).toBe('PATCH');
+    expect(body).not.toHaveProperty('extendedProperties');
+  });
+
+  it('merges its own key into the current private map instead of overwriting it, when the display mode changes', async () => {
+    const provider = makeProvider();
+    requestMock.mockResolvedValueOnce({
+      extendedProperties: {
+        private: { someOtherIntegrationsKey: 'do-not-touch-me', ofcDisplay: 'background' }
+      }
+    });
+    requestMock.mockResolvedValueOnce(true);
+
+    await provider.updateEvent(
+      { persistentId: 'event-1' },
+      { ...baseEvent, display: 'background' },
+      { ...baseEvent, display: 'block' }
+    );
+
+    expect(requestMock).toHaveBeenCalledTimes(2);
+    const [, , getMethod] = requestMock.mock.calls[0];
+    expect(getMethod).toBe('GET');
+
+    const [, , patchMethod, body] = requestMock.mock.calls[1];
+    expect(patchMethod).toBe('PATCH');
+    expect(body).toMatchObject({
+      extendedProperties: {
+        private: { someOtherIntegrationsKey: 'do-not-touch-me', ofcDisplay: 'block' }
+      }
+    });
+  });
+});
