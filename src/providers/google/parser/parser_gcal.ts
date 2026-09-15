@@ -126,11 +126,20 @@ export function fromGoogleEvent(gEvent: GoogleEventLike): OFCEvent | null {
   eventData.location = location || undefined;
   eventData.description = description || undefined;
 
-  const popupReminder = gEvent.reminders?.overrides?.find(
-    reminder => reminder.method === 'popup' && typeof reminder.minutes === 'number'
-  );
-  if (popupReminder) {
-    eventData.alarms = [{ minutesBefore: popupReminder.minutes, action: 'DISPLAY' }];
+  // Capture all overrides (popup + email), not just the first. `useDefault: true` means no
+  // `overrides` at all - leave `alarms` unset (see toGoogleEvent: unset = don't touch reminders).
+  const reminderOverrides = gEvent.reminders?.overrides
+    ?.filter(
+      (reminder): reminder is { method: 'popup' | 'email'; minutes: number } =>
+        (reminder.method === 'popup' || reminder.method === 'email') &&
+        typeof reminder.minutes === 'number'
+    )
+    .map(reminder => ({
+      minutesBefore: reminder.minutes,
+      action: reminder.method === 'email' ? ('EMAIL' as const) : ('DISPLAY' as const)
+    }));
+  if (reminderOverrides && reminderOverrides.length > 0) {
+    eventData.alarms = reminderOverrides;
   }
 
   const storedDisplay = gEvent.extendedProperties?.private?.[GOOGLE_DISPLAY_PROPERTY];
@@ -266,15 +275,18 @@ export function toGoogleEvent(event: OFCEvent): object {
     gEvent.recurrence = recurrence;
   }
 
-  // Always send an explicit reminder state. Omitting `reminders` makes Google fall back to
-  // the calendar's default reminders, which would silently undo an intentionally empty value.
-  gEvent.reminders = {
-    useDefault: false,
-    overrides: (event.alarms ?? []).map(alarm => ({
-      method: 'popup',
-      minutes: alarm.minutesBefore
-    }))
-  };
+  // `alarms === undefined` means "no authoritative data" (default reminders, or untouched) -
+  // omit `reminders` so Google's existing state is left alone. Sending `overrides: []` here
+  // would silently kill the user's default notifications for the event.
+  if (event.alarms !== undefined) {
+    gEvent.reminders = {
+      useDefault: false,
+      overrides: event.alarms.map(alarm => ({
+        method: alarm.action === 'EMAIL' ? 'email' : 'popup',
+        minutes: alarm.minutesBefore
+      }))
+    };
+  }
 
   // Send the key explicitly either way: an empty string clears any previously stored value,
   // so resetting the display mode is not shadowed by a stale property on Google's copy.

@@ -380,7 +380,7 @@ describe('GoogleProvider reminder mapping', () => {
     });
   });
 
-  it('serializes an absent alarm as an explicit empty reminder override', () => {
+  it('omits reminders entirely when the event has no alarm data, to avoid disabling default reminders', () => {
     const event = {
       title: 'No Reminder',
       type: 'single',
@@ -391,12 +391,88 @@ describe('GoogleProvider reminder mapping', () => {
       endTime: '11:00'
     } as OFCEvent;
 
+    expect(toGoogleEvent(event)).not.toHaveProperty('reminders');
+  });
+
+  it('serializes an explicitly emptied alarm list as an explicit empty reminder override', () => {
+    const event = {
+      title: 'No Reminder',
+      type: 'single',
+      date: '2026-06-15',
+      endDate: null,
+      allDay: false,
+      startTime: '10:00',
+      endTime: '11:00',
+      alarms: []
+    } as OFCEvent;
+
     expect(toGoogleEvent(event)).toMatchObject({
       reminders: {
         useDefault: false,
         overrides: []
       }
     });
+  });
+
+  it('parses multiple Google reminder overrides, including email reminders', () => {
+    const event = fromGoogleEvent({
+      id: 'google-event-1',
+      summary: 'Multi Reminder',
+      start: { dateTime: '2026-06-15T10:00:00+02:00', timeZone: 'Europe/Amsterdam' },
+      end: { dateTime: '2026-06-15T11:00:00+02:00', timeZone: 'Europe/Amsterdam' },
+      reminders: {
+        useDefault: false,
+        overrides: [
+          { method: 'popup', minutes: 10 },
+          { method: 'email', minutes: 1440 }
+        ]
+      }
+    });
+
+    expect(event?.alarms).toEqual([
+      { minutesBefore: 10, action: 'DISPLAY' },
+      { minutesBefore: 1440, action: 'EMAIL' }
+    ]);
+  });
+
+  it('serializes multiple provider alarms as separate popup/email overrides', () => {
+    const event = {
+      title: 'Multi Reminder',
+      type: 'single',
+      date: '2026-06-15',
+      endDate: null,
+      allDay: false,
+      startTime: '10:00',
+      endTime: '11:00',
+      alarms: [
+        { minutesBefore: 10, action: 'DISPLAY' },
+        { minutesBefore: 1440, action: 'EMAIL' }
+      ]
+    } as OFCEvent;
+
+    expect(toGoogleEvent(event)).toMatchObject({
+      reminders: {
+        useDefault: false,
+        overrides: [
+          { method: 'popup', minutes: 10 },
+          { method: 'email', minutes: 1440 }
+        ]
+      }
+    });
+  });
+
+  it('leaves alarms unset when the event relies on the calendar default (useDefault: true)', () => {
+    const event = fromGoogleEvent({
+      id: 'google-event-1',
+      summary: 'Default Reminder',
+      start: { dateTime: '2026-06-15T10:00:00+02:00', timeZone: 'Europe/Amsterdam' },
+      end: { dateTime: '2026-06-15T11:00:00+02:00', timeZone: 'Europe/Amsterdam' },
+      reminders: {
+        useDefault: true
+      }
+    });
+
+    expect(event?.alarms).toBeUndefined();
   });
 
   it('serializes a zero-minute alarm as a reminder at event start', () => {
