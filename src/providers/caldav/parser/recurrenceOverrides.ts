@@ -28,10 +28,33 @@ export function getComponentRecurrenceId(component: ical.Component): string | nu
     return normalizeRecurrenceIdString(String(value));
   }
 
-  const dt = parseTimezoneAwareString(value);
   if (value.isDate) {
-    return dt.toISODate();
+    return parseTimezoneAwareString(value).toISODate();
   }
+
+  const recurrenceProperty = prop as unknown as {
+    getParameter(name: string): string | undefined;
+  };
+  const parameterTimezone =
+    recurrenceProperty.getParameter('tzid') || recurrenceProperty.getParameter('TZID');
+  if (parameterTimezone) {
+    const zoned = DateTime.fromObject(
+      {
+        year: value.year,
+        month: value.month,
+        day: value.day,
+        hour: value.hour,
+        minute: value.minute,
+        second: value.second || 0
+      },
+      { zone: parameterTimezone }
+    );
+    if (zoned.isValid) {
+      return zoned.toISO({ suppressMilliseconds: true });
+    }
+  }
+
+  const dt = parseTimezoneAwareString(value);
   return dt.toISO({ suppressMilliseconds: true });
 }
 
@@ -72,12 +95,18 @@ export function buildOverrideEventData(
   const overrideEventData: OFCEvent = {
     ...newEventData,
     uid: masterEvent.uid,
+    ...(masterEvent.caldavHref ? { caldavHref: masterEvent.caldavHref } : {}),
+    ...(masterEvent.etag ? { etag: masterEvent.etag } : {}),
     timezone: newEventData.timezone || masterEvent.timezone,
     recurrenceId: originalInstanceStart,
     notify: newEventData.notify !== undefined ? newEventData.notify : masterEvent.notify,
     alarms: newEventData.alarms !== undefined ? newEventData.alarms : masterEvent.alarms
   };
   const overrideVEvent = createOverrideVEvent(overrideEventData, originalInstanceStart);
+  const persistedRecurrenceId = getComponentRecurrenceId(overrideVEvent);
+  if (persistedRecurrenceId) {
+    overrideEventData.recurrenceId = persistedRecurrenceId;
+  }
   return { overrideEventData, originalInstanceStart, overrideVEvent };
 }
 
