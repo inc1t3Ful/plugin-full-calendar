@@ -36,6 +36,43 @@ one layer deeper:
    back out of its `rrule` string. Last bug in the cluster: no further layer
    left unhandled.
 
+# 2026-09-22
+
+## #8 fix/google-display-reminder-sync (review follow-up)
+
+**Bug:** Upstream review of #1's fix surfaced three further issues on the
+same branch:
+1. `toGoogleEvent` sent an explicit `overrides: []` whenever `event.alarms`
+   was undefined, which also covers events that rely on Google's
+   calendar-default reminders. That silently disabled default notifications
+   on any sync touching the event.
+2. `fromGoogleEvent` only parsed the first popup override, so an event with
+   more than one reminder (e.g. popup + email) lost every reminder but the
+   first on the next serialize. `EditEvent`'s reminder field only shows/edits
+   one alarm, compounding this: an untouched field re-saved just `alarms[0]`.
+3. `updateEvent` used PUT, replacing the entire Google event resource,
+   including attendees, conferencing data, colorId, and any
+   `extendedProperties` written by other Calendar integrations.
+
+**Fix:**
+- `reminders` is now only sent when `alarms` is explicitly set; `undefined`
+  leaves Google's existing reminder state untouched.
+- `fromGoogleEvent` captures all overrides, not just the first, and
+  `toGoogleEvent` serializes each alarm back to its correct method
+  (popup/email). Added a touched flag (`computeSubmittedAlarms` in
+  `EditEvent.tsx`) so an untouched reminder field passes the full original
+  alarms array through instead of collapsing it to one.
+- `updateEvent` switched from PUT to PATCH. `extendedProperties.private` is
+  a map field with undocumented merge semantics under PATCH, so it's now
+  omitted from the body unless our own display key is changing, in which
+  case it's merged with the live map via a GET immediately before the PATCH.
+
+**Result:** Google sync no longer wipes default reminders, no longer drops
+multi-reminder events, and no longer clobbers fields or extended properties
+owned by other integrations.
+
+Merged upstream via PR #402.
+
 # 2026-09-11
 
 ## #7 fix/google-edit-modal-recurrence-hydration
